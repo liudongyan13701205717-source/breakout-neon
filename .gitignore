@@ -1,0 +1,11 @@
+# 编辑器 / 系统临时文件
+*.swp
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
+
+# 本地运行产生的数据（若有）
+*.sav
+saves/
+screenshots/
