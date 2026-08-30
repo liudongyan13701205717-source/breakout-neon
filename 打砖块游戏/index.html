@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>霓虹砖块 · Neon Breakout</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b1228'/><rect x='6' y='6' width='8' height='8' rx='2' fill='%2322d3ee'/><rect x='18' y='6' width='8' height='8' rx='2' fill='%23f472b6'/><rect x='12' y='18' width='8' height='8' rx='2' fill='%237c3aed'/></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="stage">
+    <canvas id="game" width="900" height="640"></canvas>
+
+    <!-- 常驻“返回主菜单”按钮：游戏中与编辑器均可见（Esc 同样可触发） -->
+    <button id="btn-return" class="return-btn hidden" type="button" title="返回主菜单 (Esc)">⟵ 主菜单</button>
+
+    <!-- 顶部 HUD：所有常驻文字均在此（DOM），与画布分层，绝不互相遮挡 -->
+    <div id="hud" class="hud">
+      <div class="hud-group hud-left">
+        <div class="stat"><span class="stat-k">分数</span><span id="score" class="stat-v">0</span></div>
+        <div class="stat"><span class="stat-k">关卡</span><span id="level" class="stat-v">1</span></div>
+        <div class="stat"><span class="stat-k">生命</span><span id="lives" class="stat-v">♥♥♥</span></div>
+        <button id="btn-mute" class="hud-btn" type="button" title="静音 (M)">🔊</button>
+      </div>
+      <div class="hud-group hud-center">
+        <div id="combo" class="combo hidden"></div>
+        <div id="double" class="double hidden"></div>
+      </div>
+      <div class="hud-group hud-right">
+        <div class="energy" title="击碎砖块积累能量，满格按 G 释放超载">
+          <span class="energy-k">能量</span>
+          <div class="energy-track"><div id="energy-fill" class="energy-fill"></div></div>
+          <span id="energy-pct" class="energy-pct">0%</span>
+        </div>
+        <div id="laser" class="laser"><span class="laser-dot"></span><span id="laser-txt">激光 就绪</span></div>
+      </div>
+    </div>
+
+    <!-- 情境操作提示（发射提示 / 控制图例），无遮挡、自动淡出 -->
+    <div id="play-hint" class="play-hint"></div>
+
+    <!-- BOSS 血条（仅 BOSS 出场时显示）-->
+    <div id="boss-bar" class="boss-bar hidden">
+      <span class="boss-k">BOSS</span>
+      <div class="boss-track"><div id="boss-fill" class="boss-fill"></div></div>
+    </div>
+
+    <!-- 开始界面 -->
+    <div id="screen-start" class="overlay">
+      <div class="panel">
+        <h1 class="title"><span class="title-neon">霓虹</span>砖块</h1>
+        <p class="subtitle">NEON&nbsp;BREAKOUT</p>
+
+        <div class="mode-row">
+          <button id="btn-start-classic" class="mode-card primary" type="button">
+            <span class="mode-name">经典模式</span>
+            <span class="mode-desc">5 关精心设计的关卡，逐关解锁强化</span>
+          </button>
+          <button id="btn-start-endless" class="mode-card" type="button">
+            <span class="mode-name">无尽模式</span>
+            <span class="mode-desc">程序化波次，难度永无止境</span>
+          </button>
+          <button id="btn-start-boss" class="mode-card" type="button">
+            <span class="mode-name">BOSS 突袭</span>
+            <span class="mode-desc">连续挑战不断强化的巨型砖核</span>
+          </button>
+        </div>
+
+        <p class="controls-hint">
+           ← → / 鼠标 移动挡板 &nbsp;·&nbsp; 空格 / 点击 发射 &nbsp;·&nbsp; F 激光 &nbsp;·&nbsp; G 超载 &nbsp;·&nbsp; P 暂停 &nbsp;·&nbsp; M 静音 &nbsp;·&nbsp; Esc 返回菜单
+        </p>
+
+        <div class="meta-row">
+          <span id="start-high" class="meta-pill">最高分 0</span>
+          <span id="start-ach" class="meta-pill">成就 0/6</span>
+          <span id="upgrade-credits" class="meta-pill">霓虹币 0</span>
+        </div>
+
+        <div class="link-row">
+          <button id="btn-editor" class="link-btn" type="button">地图工坊</button>
+          <button id="btn-upgrades" class="link-btn" type="button">永久升级</button>
+          <button id="btn-continue" class="link-btn hidden" type="button">继续游戏</button>
+          <button id="btn-help" class="link-btn" type="button">玩法说明</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 关卡间强化 -->
+    <div id="screen-perk" class="overlay hidden">
+      <div class="panel">
+        <h2 id="perk-title" class="perk-title">选择一项强化</h2>
+        <p id="perk-subtitle" class="perk-subtitle">选择一项强化</p>
+        <div id="perk-cards" class="perk-cards"></div>
+      </div>
+    </div>
+
+    <!-- 通关（经典模式终局） -->
+    <div id="screen-complete" class="overlay hidden">
+      <div class="panel">
+        <h2 class="result-title win">全部通关！</h2>
+        <p id="complete-stars" class="result-stars">★★★</p>
+        <p id="complete-score" class="result-score">最终分数 0</p>
+        <p id="complete-high" class="result-high">最高分 0</p>
+        <button id="btn-replay" class="btn primary" type="button">再玩一次</button>
+      </div>
+    </div>
+
+    <!-- 失败 -->
+    <div id="screen-over" class="overlay hidden">
+      <div class="panel">
+        <h2 class="result-title lose">游戏结束</h2>
+        <p id="over-score" class="result-score">最终分数 0</p>
+        <p id="over-high" class="result-high">最高分 0</p>
+        <button id="btn-restart" class="btn primary" type="button">重新开始</button>
+      </div>
+    </div>
+
+    <!-- 暂停 -->
+    <div id="screen-pause" class="overlay hidden">
+      <div class="panel">
+        <h2 class="result-title">已暂停</h2>
+        <p class="pause-hint">按 <kbd>P</kbd> 继续 &nbsp;·&nbsp; <kbd>Esc</kbd> 返回主菜单</p>
+        <button id="btn-pause-help" class="link-btn" type="button">玩法说明</button>
+      </div>
+    </div>
+
+    <!-- 退出确认 -->
+    <div id="screen-exit" class="overlay hidden">
+      <div class="panel">
+        <h2 id="exit-title" class="perk-title">保存当前进度？</h2>
+        <p id="exit-msg" class="perk-subtitle">可保存进度以便稍后继续；也可直接退出当前游戏。</p>
+        <div class="exit-actions">
+          <button id="btn-exit-save" class="btn primary" type="button">保存并退出</button>
+          <button id="btn-exit-discard" class="btn" type="button">直接退出</button>
+          <button id="btn-exit-cancel" class="btn ghost" type="button">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 永久升级 -->
+    <div id="screen-upgrades" class="overlay hidden">
+      <div class="panel">
+        <h2 class="perk-title">永久升级</h2>
+        <p class="perk-subtitle">用霓虹币解锁跨局生效的强化（每局结束按分数获得霓虹币）</p>
+        <div id="upgrade-list" class="upgrade-list"></div>
+        <button id="btn-upg-close" class="btn primary" type="button">返回主菜单</button>
+      </div>
+    </div>
+
+    <!-- 玩法说明 -->
+    <div id="screen-help" class="overlay hidden">
+      <div class="panel help-panel">
+        <h2 class="perk-title">玩法说明</h2>
+        <div class="help-grid">
+          <div class="help-col">
+            <h3>操作</h3>
+            <ul>
+              <li><b>← →</b> 或 <b>鼠标</b>：移动挡板</li>
+              <li><b>空格 / 点击</b>：发射小球</li>
+              <li><b>F</b>：发射激光（有冷却）</li>
+              <li><b>G</b>：能量满时释放<b>超载</b></li>
+              <li><b>P</b>：暂停 &nbsp;·&nbsp; <b>Esc</b>：返回主菜单</li>
+            </ul>
+            <h3>目标</h3>
+            <ul>
+              <li>击碎全部可破坏砖块即可过关</li>
+              <li>速通可获 <b>时间奖励</b> 额外加分</li>
+              <li>球掉落则损失一条生命，生命耗尽即结束</li>
+            </ul>
+            <h3>BOSS 战 · 弹幕</h3>
+            <ul>
+              <li>BOSS 会向挡板<b>瞄准散射</b>并（高关）释放<b>环形弹幕</b></li>
+              <li>用球或激光猛击 BOSS 掉血，血条归零即击败（连击可加速）</li>
+              <li>被弹幕击中会损失生命，注意走位躲避</li>
+            </ul>
+          </div>
+          <div class="help-col">
+            <h3>砖块</h3>
+            <ul>
+              <li><span class="dot c1"></span>普通 · <span class="dot c2"></span>硬砖(多次) · <span class="dot c3"></span>爆炸(连锁)</li>
+              <li><span class="dot c4"></span>不可破坏 · <span class="dot c5"></span>BOSS(高血量，受击掉血并带霓虹命中反馈)</li>
+              <li><span class="dot c6"></span>相位砖：周期<b>实体↔虚影</b>，虚影时球可穿过</li>
+              <li><span class="dot c7"></span>引力井：吸引小球 · <span class="dot c8"></span>再生砖：限次复活</li>
+            </ul>
+            <h3>道具 / 强化 / 元进度</h3>
+            <ul>
+              <li>掉落：加宽 / 多球 / 减速 / 双倍星 / <b>穿甲</b> / <b>电磁脉冲</b></li>
+              <li>每过一关三选一 <b>永久强化</b></li>
+              <li>每局获得 <b>霓虹币</b>，可在主菜单 <b>永久升级</b>（生命/挡板/激光/能量/连击/磁吸）</li>
+            </ul>
+            <h3>能量超载（终极技）</h3>
+            <ul>
+              <li>击碎砖块积累 <b>能量</b>，满格按 <b>G</b></li>
+              <li>释放：短时<b>加宽挡板 + 减速来球</b>（纯增益，不跳关）</li>
+            </ul>
+            <h3>霓虹协议（Roguelike 增益）</h3>
+            <ul>
+              <li>每关开局随机获得一项协议：<b>疾速</b>(球更快) / <b>富源</b>(道具更多) / <b>双倍时</b>(时间奖励×1.5)</li>
+              <li>叠加 <b>连击</b> 倍率（连击越高分越高），让每局都不同</li>
+            </ul>
+          </div>
+        </div>
+        <button id="btn-help-close" class="btn primary" type="button">知道了</button>
+      </div>
+    </div>
+
+    <!-- 地图工坊（画笔 + 核心动作） -->
+    <div id="editor-bar" class="editor-bar hidden">
+      <div class="editor-row">
+        <span class="editor-label">画笔</span>
+        <div id="editor-palette" class="editor-palette"></div>
+      </div>
+      <div class="editor-row">
+        <span class="editor-sep"></span>
+        <button id="btn-ed-play" class="ed-btn" type="button">试玩</button>
+        <button id="btn-ed-save" class="ed-btn" type="button">保存</button>
+        <button id="btn-ed-share" class="ed-btn" type="button">分享码</button>
+        <button id="btn-ed-import" class="ed-btn" type="button">导入</button>
+        <button id="btn-ed-clear" class="ed-btn ghost" type="button">清空</button>
+      </div>
+      <textarea id="editor-code" class="editor-code" placeholder="点“分享码”生成并复制；粘贴分享码后点“导入”即可载入地图"></textarea>
+      <p class="editor-hint">左键放置 · 右键 / 橡皮 擦除 · 保存 / 分享码 离线可用</p>
+    </div>
+  </div>
+
+  <script src="matter.min.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
