@@ -6,9 +6,19 @@
 
 ## 怎么玩
 
-直接双击 `index.html` 用浏览器打开即可，无需安装、无需服务器。
+### 在线游玩（无需安装）
 
-> 提示：请在浏览器中直接打开，或使用任意静态服务器。游戏进度与战绩保存在本机浏览器的 `localStorage` 中，不会上传到任何地方。
+直接访问：<https://liudongyan13701205717-source.github.io/breakout-neon/>
+
+> 注意：在线版本可以保存进度，但部分浏览器对 github.io 的 localStorage 有限制，建议下载到本地游玩以获得最佳体验。
+
+### 下载游玩（推荐，进度稳定保存）
+
+1. 点击仓库页面右上角的 **Code** → **Download ZIP**
+2. 解压后双击 `index.html` 用浏览器打开即可
+3. 所有进度（最高分、成就、霓虹币、存档、自定义地图、每日最佳）保存在本机浏览器中
+
+或者直接下载 ZIP：<https://github.com/liudongyan13701205717-source/breakout-neon/archive/refs/heads/main.zip>
 
 ## 游戏内容
 
