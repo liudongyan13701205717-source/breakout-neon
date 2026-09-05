@@ -21,6 +21,9 @@
   const META_KEY = "neon-breakout-meta-v2";
   const RUN_KEY = "neon-breakout-run-v1";
   const MUTE_KEY = "neon-breakout-mute";
+  const DAILY_KEY = "neon-breakout-daily-v2";
+  const CHRONO_PER = 40;
+  const PERFECT_BONUS = 200;
 
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
@@ -69,6 +72,7 @@
     bossActive: false, bossNextShot: 0,
     modPu: 0, modSpeed: 1, modTime: 1, modifierName: "",
     perks: null, customGrid: null,
+    chronoBonus: 0, perfect: true,
     highScore: loadHighScore(),
     achievements: loadAchievements(),
   };
@@ -78,6 +82,9 @@
   let pendingLaser = null;   // 激光充能中：{ x }
   let laserChargeUntil = 0;
   let screenFlashA = 0, screenFlashColor = "#fff"; // 全屏闪光（电影感）
+  let energyReadyNotified = false;
+  let heartbeatAt = 0;
+  let dailyBest = loadDailyBest();
   let exitContext = "playing";
 
   // ---------- 工具 ----------
@@ -95,6 +102,9 @@
       case 6: return { type: "phase", hp: 1, color: "#2dd4bf", points: 15 };
       case 7: return { type: "vortex", hp: 2, color: "#f472b6", points: 25 };
       case 8: return { type: "regen", hp: 1, color: "#a3e635", points: 18, regenLeft: 2 };
+      case 9: return { type: "coin", hp: 1, color: "#fbbf24", points: 50, credits: 3 };
+      case 10: return { type: "time", hp: 1, color: "#22d3ee", points: 20, chrono: 8 };
+      case 11: return { type: "lightning", hp: 1, color: "#60a5fa", points: 25 };
       default: return { type: "normal", hp: 1, color: BRICK_COLORS[r % BRICK_COLORS.length], points: 10 };
     }
   }
@@ -208,6 +218,8 @@
     unlocked[id] = true;
     try { localStorage.setItem(ACH_KEY, JSON.stringify(unlocked)); } catch (e) {}
     updateAchievementDisplay();
+    const def = ACH_DEFS.find(a => a.id === id);
+    if (def) showToast("🏆 成就解锁：" + def.name, "achievement");
   }
   function updateAchievementDisplay() {
     const n = Object.keys(unlocked).filter((k) => unlocked[k]).length;
@@ -216,6 +228,8 @@
 
   function loadHighScore() { try { return parseInt(localStorage.getItem(HIGH_KEY)) || 0; } catch (e) { return 0; } }
   function saveHighScore() { try { localStorage.setItem(HIGH_KEY, String(state.highScore)); } catch (e) {} }
+  function loadDailyBest() { try { return JSON.parse(localStorage.getItem(DAILY_KEY)) || {}; } catch (e) { return {}; } }
+  function saveDailyBest() { try { localStorage.setItem(DAILY_KEY, JSON.stringify(dailyBest)); } catch (e) {} }
   function updateHighScoreDisplays() {
     const t = "最高分 " + state.highScore;
     if (els.startHigh) els.startHigh.textContent = t;
@@ -280,6 +294,8 @@
       Body.setVelocity(body, { x: Math.cos(a) * std, y: Math.sin(a) * std }); return;
     }
     if (sp < std * 0.6) { const k = (std * 0.6) / sp; vx *= k; vy *= k; sp = std * 0.6; }
+    // 总速硬上限：杜绝挡板"叠加速度"导致球速翻倍（P0，实机复现 6 → 12.4）
+    if (sp > std * 1.6) { const k = (std * 1.6) / sp; vx *= k; vy *= k; sp = std * 1.6; }
     // 最小垂直分量（同时保证最小反弹角 ≥~21°），根绝纯水平死循环
     const minVy = Math.max(std * 0.30, sp * 0.36);
     if (Math.abs(vy) < minVy) {
@@ -352,6 +368,8 @@
     };
     if (spec.type === "regen") brick.regenLeft = spec.regenLeft;
     if (spec.type === "vortex") { brick.spin = 0; }
+    if (spec.type === "coin") brick.credits = spec.credits;
+    if (spec.type === "time") brick.chrono = spec.chrono;
     const body = Bodies.rectangle(x + L.brickW / 2, y + L.brickH / 2, L.brickW, L.brickH, {
       isStatic: true, restitution: 1, friction: 0,
     });
@@ -383,12 +401,55 @@
         if (Math.random() < 0.18) continue;
         let code = 1;
         const roll = Math.random();
-        if (roll < 0.12) code = 2;
-        else if (roll < 0.18) code = 3;
-        else if (roll < 0.22) code = 6;
-        else if (roll < 0.25) code = 7;
-        else if (roll < 0.28) code = 8;
-        else if (roll < 0.32) code = 4;
+        if (roll < 0.10) code = 2;
+        else if (roll < 0.15) code = 3;
+        else if (roll < 0.19) code = 6;
+        else if (roll < 0.22) code = 7;
+        else if (roll < 0.25) code = 8;
+        else if (roll < 0.28) code = 4;
+        else if (roll < 0.31) code = 9;
+        else if (roll < 0.34) code = 10;
+        else if (roll < 0.37) code = 11;
+        addBrick(L, r, c, code);
+      }
+  }
+  // 日期种子（YYYYMMDD）→ 唯一每日地图
+  function dailySeed() {
+    const d = new Date();
+    return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  }
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function buildDailyLevel() {
+    clearBricks();
+    const seed = dailySeed();
+    const rng = mulberry32(seed);
+    const cols = 13, rows = 7;
+    const L = layoutFor(cols);
+    const pattern = Math.floor(rng() * 4);
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++) {
+        if (rng() < 0.15) continue;
+        let code = 1;
+        const roll = rng();
+        if (roll < 0.10) code = 2;
+        else if (roll < 0.15) code = 3;
+        else if (roll < 0.19) code = 6;
+        else if (roll < 0.22) code = 7;
+        else if (roll < 0.25) code = 8;
+        else if (roll < 0.30) code = 9;
+        else if (roll < 0.34) code = 10;
+        else if (roll < 0.38) code = 11;
+        // 4 种图案布局：菱形 / 棋盘 / 条纹 / 随机
+        if (pattern === 0) { const cx = (cols - 1) / 2, cy = (rows - 1) / 2; if (Math.abs(c - cx) + Math.abs(r - cy) > 4.5) continue; }
+        else if (pattern === 1) { if ((r + c) % 2 === 0 && rng() < 0.5) continue; }
+        else if (pattern === 2) { if (r % 2 === 0 && rng() < 0.4) continue; }
         addBrick(L, r, c, code);
       }
   }
@@ -492,7 +553,7 @@
   // ---------- 霓虹协议（Roguelike 每关随机增益） ----------
   function applyModifier() {
     state.modPu = 0; state.modSpeed = 1; state.modTime = 1; state.modifierName = "";
-    if (state.gameMode === "classic" && state.level === 1) return;
+    if (state.gameMode === "daily" || (state.gameMode === "classic" && state.level === 1)) return;
     const pool = [
       { name: "疾速协议", apply: () => { state.modSpeed = 1.25; } },
       { name: "富源协议", apply: () => { state.modPu = 0.12; } },
@@ -521,15 +582,41 @@
     spawnBreak(brick.x + brick.w / 2, brick.y + brick.h / 2, brick.color);
     spawnFloat(brick.x + brick.w / 2, brick.y, "+" + Math.round(brick.points * comboMult()));
     state.energy = Math.min(100, state.energy + 2 + Math.floor(state.combo / 3));
+    if (state.energy >= 100 && !energyReadyNotified) {
+      energyReadyNotified = true;
+      showToast("⚡ 超载就绪！按 G 释放", "combo");
+      screenFlashFx("#fde68a", 0.25);
+      voice({ freq: 880, slideTo: 1320, type: "sine", dur: 0.15, vol: 0.06 });
+    }
     if (!fromChain) {
       state.combo++;
       state.comboExpire = now + 1600 * state.perks.comboMul * (1 + 0.15 * state.perks.comboBonus);
+      if (state.combo === 5) showToast("🔥 5 连击！", "combo");
+      else if (state.combo === 10) showToast("🔥 10 连击！势不可挡", "combo");
+      else if (state.combo === 20) showToast("🔥 20 连击！无人能挡", "combo");
+      else if (state.combo >= 30 && state.combo % 10 === 0) showToast("🔥 " + state.combo + " 连击！", "combo");
       if (state.combo >= 4) unlock("combo");
     }
     maybeDropPowerup(brick.x + brick.w / 2, brick.y + brick.h / 2);
     if (brick.type === "boss") { unlock("boss"); removeBoss(); spawnFlash(brick.x + brick.w / 2, brick.y + brick.h / 2, 160, "#a78bfa"); }
-    if (brick.type === "explosive") { timeFreeze = 90; chainExplode(brick); }
+    if (brick.type === "explosive") { timeFreeze = 90; chainExplode(brick); shockwaveRing(brick.x + brick.w / 2, brick.y + brick.h / 2, brick.color); }
     if (brick.type === "vortex") unlock("vortex");
+    if (brick.type === "coin") { meta.credits += brick.credits || 3; saveMeta(); spawnFloat(brick.x + brick.w / 2, brick.y - 6, "💎+" + (brick.credits || 3)); if (els.upgCredits) els.upgCredits.textContent = "霓虹币 " + meta.credits; }
+    if (brick.type === "time") { state.chronoBonus += brick.chrono || 8; spawnFloat(brick.x + brick.w / 2, brick.y - 6, "⏱+" + (brick.chrono || 8)); }
+    if (brick.type === "lightning") { chainLightning(brick); }
+  }
+  function chainLightning(brick) {
+    // 闪电链：击碎同行所有可破砖块（无视距离），附带小范围冲击
+    const row = brick.gy;
+    let chained = 0;
+    for (const other of bricks) {
+      if (!other.alive || other === brick || other.type === "indestructible") continue;
+      if (other.gy !== row) continue;
+      breakBrick(other, true);
+      chained++;
+      spawnFlash(other.x + other.w / 2, other.y + other.h / 2, 28, "#bfdbfe");
+    }
+    if (chained > 0) { addShake(6, 180); spawnFlash(brick.x + brick.w / 2, brick.y + brick.h / 2, 60, "#93c5fd"); }
   }
   function chainExplode(brick) {
     for (const other of bricks) {
@@ -633,6 +720,7 @@
     if (state.mode !== "playing" || state.levelTransitioning) return;
     if (state.energy < 100) return;
     state.energy = 0;
+    energyReadyNotified = false;
     // 局部“超载脉冲”：以球（或挡板）为中心的小范围清除/削血，不秒杀全场，能量门控即长冷却
     hitStop(120);
     screenFlashFx("#a855f7", 0.32);
@@ -686,12 +774,20 @@
           }
         } else { brick.pendingBreak = false; addScore(2); }
       } else if (ballBody && paddleBody) {
-        const v = ballBody.velocity;
-        const speed = Math.hypot(v.x, v.y) || ballSpeed();
+        // 挡板反弹：始终回到设计球速，杜绝 solver 叠加速度翻倍（P0）
+        const speed = ballSpeed();
         const off = clamp((ballBody.position.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2), -1, 1);
         let ang = -Math.PI / 2 + off * (Math.PI / 3);
-        ang += (Math.random() - 0.5) * 0.1; // 微抖，避免完美垂直/水平死锁
+        ang += (Math.random() - 0.5) * 0.1;
         Body.setVelocity(ballBody, { x: Math.cos(ang) * speed, y: Math.sin(ang) * speed });
+        // 反弹火花 VFX
+        const bx = ballBody.position.x, by = ballBody.position.y;
+        for (let i = 0; i < 8; i++) {
+          const a = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.8;
+          const sp = 2 + Math.random() * 4;
+          particles.push({ x: bx, y: by, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.6, color: "#5eead4", size: 1.5 + Math.random() * 2 });
+        }
+        voice({ freq: 520 + off * 200, slideTo: 700, type: "triangle", dur: 0.04, vol: 0.04, attack: 0.002 });
       }
     }
   });
@@ -733,14 +829,23 @@
   function addShake(mag, dur) { shakeMag = Math.max(shakeMag, mag); shakeT = Math.max(shakeT, dur); }
   function hitStop(ms) { timeFreeze = Math.max(timeFreeze, ms); }
   function screenFlashFx(color, a) { screenFlashColor = color; screenFlashA = Math.max(screenFlashA, a); }
+  function shockwaveRing(x, y, color) {
+    spawnFlash(x, y, 90, color);
+    spawnFlash(x, y, 50, "#fff");
+    voice({ freq: 180, slideTo: 60, type: "sawtooth", dur: 0.3, vol: 0.07, lp: 1200 });
+    addShake(10, 320);
+    hitStop(80);
+  }
 
   // ---------- 关卡流程 ----------
   function startGame(mode) {
     initAudio();
-    els.hud.classList.remove("hidden");
     state.gameMode = mode || "classic";
+    bgmStart(state.gameMode === "daily" ? "classic" : state.gameMode);
+    els.hud.classList.remove("hidden");
     state.score = 0; state.level = 1;
-    state.perks = defaultPerks(); applyMeta(state.perks);
+    state.perks = defaultPerks();
+    if (state.gameMode !== "daily") applyMeta(state.perks);
     state.lives = STARTING_LIVES + state.perks.lifeBonus;
     state.energy = state.perks.energyBonus;
     startLevel();
@@ -754,6 +859,7 @@
     clearBricks();
     if (state.gameMode === "endless") buildEndlessWave(state.level);
     else if (state.gameMode === "custom") buildCustomLevel(state.customGrid);
+    else if (state.gameMode === "daily") buildDailyLevel();
     else if (state.gameMode === "bossrush") spawnBoss(state.level);
     else buildLevel(state.level - 1);
     if (state.gameMode !== "bossrush" &&
@@ -767,6 +873,7 @@
     particles = []; floats = []; powerups = []; lasers = []; bossShots = [];
     clearShards();
     state.combo = 0; state.slowUntil = 0; state.bonusUntil = 0; state.laserCd = 0; state.pierceUntil = 0;
+    state.chronoBonus = 0; state.perfect = true;
     state.levelTransitioning = false;
     applyModifier();
     state.levelStart = performance.now();
@@ -780,17 +887,41 @@
     if (remaining) return;
     state.levelTransitioning = true;
     sfxClear();
-    const t = (performance.now() - state.levelStart) / 1000;
+    const t = Math.max(0, (performance.now() - state.levelStart) / 1000 - state.chronoBonus);
     const bonus = Math.max(0, Math.round((Math.max(8, 60 - t)) * 10 * state.perks.timeMul * (state.modTime || 1)));
     if (bonus > 0) { state.score += bonus; spawnFloat(LOGICAL_W / 2, LOGICAL_H / 2, "时间奖励 +" + bonus); }
+    if (state.perfect) {
+      state.score += PERFECT_BONUS;
+      spawnFloat(LOGICAL_W / 2, LOGICAL_H / 2 - 30, "PERFECT 无伤！+" + PERFECT_BONUS);
+      showToast("PERFECT 无伤清场 +" + PERFECT_BONUS, "perfect");
+      screenFlashFx("#a3e635", 0.3);
+    }
     if (state.gameMode === "endless" || state.gameMode === "bossrush") { state.level++; startLevel(); return; }
+    if (state.gameMode === "daily") { winGame(); return; }
     if (state.level >= TOTAL_LEVELS) { winGame(); return; }
     showPerk();
+  }
+  function updateDailyBestDisplay() {
+    const today = new Date().toISOString().slice(0, 10);
+    const best = dailyBest[today]?.score || 0;
+    const seed = dailyBest[today]?.seed;
+    const desc = document.getElementById("daily-desc");
+    if (desc) desc.textContent = seed ? "每日地图 #" + seed + " · 挑战高分" : "每日唯一地图 · 挑战最高分";
+    const el = document.getElementById("daily-best");
+    if (el) el.textContent = "每日最佳 " + best;
   }
   function winGame() {
     state.mode = "complete";
     stopAudio();
     earnCredits();
+    if (state.gameMode === "daily") {
+      const today = new Date().toISOString().slice(0, 10);
+      const prev = (dailyBest[today] && dailyBest[today].score) || 0;
+      if (state.score > prev) { dailyBest[today] = { score: state.score, seed: dailySeed() }; saveDailyBest(); }
+      meta.credits += state.score > prev ? 100 : 50;
+      saveMeta();
+      updateDailyBestDisplay();
+    }
     if (state.score > state.highScore) { state.highScore = state.score; saveHighScore(); }
     const stars = computeStars();
     if (els.completeStars) els.completeStars.textContent = "★★★☆☆☆".slice(3 - stars, 6 - stars);
@@ -809,6 +940,7 @@
   function loseLife() {
     state.lives--;
     state.combo = 0;
+    state.perfect = false;
     addShake(12, 400);
     if (state.lives <= 0) { gameOver(); return; }
     resetBall();
@@ -817,6 +949,12 @@
     state.mode = "over";
     stopAudio();
     removeBoss();
+    if (state.gameMode === "daily") {
+      const today = new Date().toISOString().slice(0, 10);
+      const prev = (dailyBest[today] && dailyBest[today].score) || 0;
+      if (state.score > prev) { dailyBest[today] = { score: state.score, seed: dailySeed() }; saveDailyBest(); }
+      updateDailyBestDisplay();
+    }
     earnCredits();
     if (state.score > state.highScore) { state.highScore = state.score; saveHighScore(); }
     if (els.overScore) els.overScore.textContent = "最终分数 " + state.score;
@@ -865,6 +1003,7 @@
     if (els.screenStart) els.screenStart.classList.remove("hidden");
     updateHighScoreDisplays();
     updateAchievementDisplay();
+    updateDailyBestDisplay();
     refreshContinue();
     showReturn(false);
   }
@@ -974,7 +1113,8 @@
   const ED_TYPES = [
     { code: 0, name: "橡皮" }, { code: 1, name: "普通" }, { code: 2, name: "硬砖" },
     { code: 3, name: "爆炸" }, { code: 4, name: "坚壁" }, { code: 6, name: "相位" },
-    { code: 7, name: "引力" }, { code: 8, name: "再生" },
+    { code: 7, name: "引力" }, { code: 8, name: "再生" }, { code: 9, name: "金币" },
+    { code: 10, name: "时间" }, { code: 11, name: "闪电" },
   ];
   const editor = { grid: null, brush: 1, hoverC: -1, hoverR: -1 };
   function newEditorGrid() { const g = []; for (let r = 0; r < ED.rows; r++) g.push(new Array(ED.cols).fill(0)); return g; }
@@ -1194,6 +1334,42 @@
       ctx.globalAlpha = alpha; ctx.fillStyle = "#fff"; ctx.font = "bold 11px system-ui"; ctx.textAlign = "center";
       ctx.fillText("↻" + (b.regenLeft > 0 ? b.regenLeft : ""), b.x + b.w / 2, b.y + b.h / 2 + 4);
     }
+    if (b.type === "coin") {
+      const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.shadowBlur = 14; ctx.shadowColor = "#fbbf24";
+      ctx.fillStyle = "#fbbf24";
+      ctx.beginPath(); ctx.arc(cx, cy, b.w * 0.32, 0, PI2); ctx.fill();
+      ctx.shadowBlur = 0; ctx.fillStyle = "#92400e"; ctx.font = "bold 12px system-ui"; ctx.textAlign = "center";
+      ctx.fillText("💎", cx, cy + 4);
+      ctx.restore();
+    }
+    if (b.type === "time") {
+      const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.shadowBlur = 12; ctx.shadowColor = "#22d3ee";
+      ctx.strokeStyle = "#22d3ee"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, b.w * 0.3, 0, PI2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - b.w * 0.22);
+      ctx.moveTo(cx, cy); ctx.lineTo(cx + b.w * 0.15, cy); ctx.stroke();
+      ctx.restore();
+    }
+    if (b.type === "lightning") {
+      const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.shadowBlur = 14; ctx.shadowColor = "#60a5fa";
+      ctx.strokeStyle = "#bfdbfe"; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(cx - 4, cy - b.h * 0.32);
+      ctx.lineTo(cx + 1, cy - 4);
+      ctx.lineTo(cx - 2, cy + 2);
+      ctx.lineTo(cx + 4, cy + b.h * 0.32);
+      ctx.stroke();
+      ctx.restore();
+    }
     ctx.globalAlpha = 1;
   }
   function drawPaddle() {
@@ -1385,7 +1561,27 @@
     paddle.targetX = clamp(paddle.targetX, 0, LOGICAL_W - paddle.w);
     paddle.x += (paddle.targetX - paddle.x) * 0.4;
     syncPaddleWidth();
-    if (paddle.body) Body.setPosition(paddle.body, { x: paddle.x + paddle.w / 2, y: paddle.y + paddle.h / 2 });
+    if (paddle.body) {
+      Body.setPosition(paddle.body, { x: paddle.x + paddle.w / 2, y: paddle.y + paddle.h / 2 });
+      Body.setVelocity(paddle.body, { x: 0, y: 0 });
+    }
+    // 危险区警示：球接近底部时闪烁红光
+    const dangerEl = document.getElementById("danger-zone");
+    if (dangerEl) {
+      let danger = false;
+      for (const b of balls) {
+        if (!b.stuck && b.body.position.y > LOGICAL_H - 120) { danger = true; break; }
+      }
+      dangerEl.classList.toggle("active", danger);
+    }
+    // 低生命心跳：1 命时触发心跳音 + 暗红 vignette
+    if (state.lives === 1 && state.mode === "playing") {
+      if (now - heartbeatAt > 800) {
+        heartbeatAt = now;
+        voice({ freq: 80, type: "sine", dur: 0.18, vol: 0.06, attack: 0.01 });
+        voice({ freq: 60, type: "sine", dur: 0.25, vol: 0.05, attack: 0.06 });
+      }
+    }
 
     const slow = now < state.slowUntil ? SLOW_FACTOR : 1;
 
@@ -1408,9 +1604,18 @@
 
     for (let i = balls.length - 1; i >= 0; i--) {
       const b = balls[i];
-      if (b.stuck) { Body.setPosition(b.body, { x: paddle.x + paddle.w / 2, y: paddle.y - 10 }); continue; }
+      if (b.stuck) {
+        // A2：stuck 球不继承残余速度（否则 Matter 会把历史速度累加进下一次发射）
+        Body.setVelocity(b.body, { x: 0, y: 0 });
+        Body.setPosition(b.body, { x: paddle.x + paddle.w / 2, y: paddle.y - 10 });
+        continue;
+      }
       clampBallVelocity(b.body);
       const p = b.body.position;
+      // A1 兜底：无论速度怎么变，小球都必须留在世界里（防穿墙/出界）
+      const cx = clamp(p.x, b.r, LOGICAL_W - b.r);
+      const cy = clamp(p.y, b.r, LOGICAL_H + 30);
+      if (cx !== p.x || cy !== p.y) Body.setPosition(b.body, { x: cx, y: cy });
       if (!isFinite(p.x) || !isFinite(p.y) || p.y > LOGICAL_H + 30) { Composite.remove(world, b.body); balls.splice(i, 1); }
     }
     if (state.mode === "playing" && balls.length === 0 && !state.levelTransitioning) { loseLife(); }
@@ -1506,6 +1711,7 @@
   function loop() {
     now = performance.now();
     const dt = Math.min(40, now - last); last = now;
+    bgmTick();
     if (state.mode === "playing" || state.mode === "editor") {
       const frozen = timeFreeze > 0;
       const scale = frozen ? 0.18 : 1;
@@ -1572,6 +1778,7 @@
   function stopAudio() {
     if (!audioCtx) return;
     audioActive = false;
+    bgmStop(); // 结束 BGM 调度（声部由 voice() 的 audioActive 门控自然收尾）
     try {
       const t = audioCtx.currentTime;
       masterGain.gain.cancelScheduledValues(t);
@@ -1671,6 +1878,74 @@
   }
   function toggleMute() { setMuted(!muted); }
 
+  // ---------- Toast 通知系统 ----------
+  function showToast(text, type) {
+    const container = document.getElementById("toast-container");
+    if (!container) return;
+    const toast = document.createElement("div");
+    toast.className = "toast" + (type ? " " + type : "");
+    toast.textContent = text;
+    container.appendChild(toast);
+    setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 2900);
+  }
+
+  // ---------- 程序化 BGM ----------
+  // 无持久振荡器：每个音符都是一次 voice()（天然受 muted/audioActive 门控，无需手动清理）。
+  const BGM = {
+    classic: {
+      tempo: 0.46, stepDur: 0.22,
+      roots: [130.81, 98.00, 174.61, 98.00],
+      arp: [523.25, 587.33, 659.25, 783.99, 880.00, 783.99, 659.25, 587.33],
+      arpType: "triangle", arpVol: 0.045, rootVol: 0.05, hat: false,
+    },
+    endless: {
+      tempo: 0.32, stepDur: 0.16,
+      roots: [110.00, 87.31, 98.00, 110.00],
+      arp: [440.00, 523.25, 587.33, 659.25, 783.99, 880.00, 659.25, 587.33],
+      arpType: "square", arpVol: 0.03, rootVol: 0.045, hat: true,
+    },
+    bossrush: {
+      tempo: 0.24, stepDur: 0.14,
+      roots: [73.42, 87.31, 98.00, 65.41],
+      arp: [587.33, 659.25, 698.46, 783.99, 880.00, 783.99, 698.46, 659.25],
+      arpType: "square", arpVol: 0.028, rootVol: 0.05, hat: true,
+    },
+    custom: {
+      tempo: 0.46, stepDur: 0.22,
+      roots: [130.81, 98.00, 174.61, 98.00],
+      arp: [523.25, 587.33, 659.25, 783.99, 880.00, 783.99, 659.25, 587.33],
+      arpType: "triangle", arpVol: 0.045, rootVol: 0.05, hat: false,
+    },
+  };
+  let bgm = { profile: null, step: 0, nextAt: 0, on: false };
+  function bgmStart(key) {
+    bgm.profile = BGM[key] || BGM.classic;
+    bgm.step = 0;
+    bgm.nextAt = (audioCtx ? audioCtx.currentTime : 0) + 0.1;
+    bgm.on = true;
+  }
+  function bgmStop() { bgm.on = false; bgm.profile = null; }
+  // 由主循环调用：按 audioCtx 时钟推进，一个 step 一个音符
+  function bgmTick() {
+    if (!bgm.on || !bgm.profile || state.mode !== "playing" || !audioCtx || muted || !audioActive) return;
+    const t = audioCtx.currentTime;
+    if (t < bgm.nextAt) return;
+    const p = bgm.profile, s = bgm.step;
+    // 低音打拍（每 4 步一个根音）
+    if (s % 4 === 0) {
+      const root = p.roots[Math.floor(s / 4) % p.roots.length];
+      voice({ freq: root, type: "sine", dur: p.tempo * 1.6, vol: p.rootVol, attack: 0.02 });
+      voice({ freq: root * 2, type: "sine", dur: p.tempo * 0.9, vol: p.rootVol * 0.5, attack: 0.02 });
+    }
+    // 琶音主旋律（8 步循环，高处回落）
+    const n = p.arp[s % p.arp.length];
+    voice({ freq: n, type: p.arpType, dur: p.stepDur * 1.4, vol: p.arpVol, attack: 0.004 });
+    if (s % 8 === 7) voice({ freq: n / 2, type: "sine", dur: p.stepDur * 2, vol: p.arpVol * 0.6, attack: 0.01 });
+    if (p.hat) noiseVoice({ dur: 0.03, vol: 0.018, hp: 8000, decay: 0.6 });
+    bgm.step++;
+    bgm.nextAt = t + p.tempo;
+  }
+
   // ---------- 升级面板 ----------
   function buildUpgradesUI() {
     if (els.upgCredits) els.upgCredits.textContent = "霓虹币 " + meta.credits;
@@ -1698,6 +1973,7 @@
   bindBtn("btn-start-classic", () => { startGame("classic"); });
   bindBtn("btn-start-endless", () => { startGame("endless"); });
   bindBtn("btn-start-boss", () => { startGame("bossrush"); });
+  bindBtn("btn-start-daily", () => { startGame("daily"); });
   bindBtn("btn-continue", continueRun);
   bindBtn("btn-upgrades", openUpgrades);
   bindBtn("btn-upg-close", goMenu);
@@ -1738,5 +2014,26 @@
   updateAchievementDisplay();
   refreshContinue();
   goMenu();
+  // 测试钩子（?test=1 时暴露内部状态，供自动化冒烟断言，正常游玩无影响）
+  if (/[?&]test=1/.test(location.search)) {
+    window.__neon = {
+      getBallStates: () => balls.map((b) => ({
+        x: b.body.position.x, y: b.body.position.y,
+        vx: b.body.velocity.x, vy: b.body.velocity.y,
+        stuck: b.stuck, r: b.r,
+      })),
+      getPaddle: () => ({ x: paddle.x, y: paddle.y, w: paddle.w, targetX: paddle.targetX }),
+      getState: () => ({ mode: state.mode, level: state.level, lives: state.lives, score: state.score, combo: state.combo }),
+      getBricks: () => bricks.filter((b) => b.alive).map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, type: b.type, hp: b.hp })),
+      getBgm: () => ({ on: bgm.on, step: bgm.step, profile: bgm.profile ? Object.keys(bgm.profile).length : 0 }),
+      testToast: (text, type) => showToast(text, type),
+      setEnergy: (v) => { state.energy = v; if (v >= 100 && !energyReadyNotified) { energyReadyNotified = true; showToast("⚡ 超载就绪！按 G 释放", "combo"); screenFlashFx("#fde68a", 0.25); voice({ freq: 880, slideTo: 1320, type: "sine", dur: 0.15, vol: 0.06 }); } },
+      testPerfect: () => { state.perfect = true; state.score += PERFECT_BONUS; showToast("PERFECT 无伤清场 +" + PERFECT_BONUS, "perfect"); screenFlashFx("#a3e635", 0.3); },
+      testAchievement: () => unlock("shock"),
+      testComboToast: () => showToast("🔥 10 连击！势不可挡", "combo"),
+      ballSpeed: () => ballSpeed(),
+      launchBall: () => { const sb = balls.find((b) => b.stuck); if (sb) launchBall(); },
+    };
+  }
   requestAnimationFrame(loop);
 })();

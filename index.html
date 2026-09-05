@@ -10,6 +10,8 @@
 <body>
   <div id="stage">
     <canvas id="game" width="900" height="640"></canvas>
+  <div id="toast-container" class="toast-container"></div>
+  <div id="danger-zone" class="danger-zone"></div>
 
     <!-- 常驻“返回主菜单”按钮：游戏中与编辑器均可见（Esc 同样可触发） -->
     <button id="btn-return" class="return-btn hidden" type="button" title="返回主菜单 (Esc)">⟵ 主菜单</button>
@@ -64,6 +66,10 @@
             <span class="mode-name">BOSS 突袭</span>
             <span class="mode-desc">连续挑战不断强化的巨型砖核</span>
           </button>
+          <button id="btn-start-daily" class="mode-card daily" type="button">
+            <span class="mode-name">每日挑战</span>
+            <span class="mode-desc" id="daily-desc">每日唯一地图 · 挑战最高分</span>
+          </button>
         </div>
 
         <p class="controls-hint">
@@ -74,6 +80,7 @@
           <span id="start-high" class="meta-pill">最高分 0</span>
           <span id="start-ach" class="meta-pill">成就 0/6</span>
           <span id="upgrade-credits" class="meta-pill">霓虹币 0</span>
+          <span id="daily-best" class="meta-pill">每日最佳 0</span>
         </div>
 
         <div class="link-row">

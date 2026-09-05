@@ -260,6 +260,8 @@ body {
 }
 .mode-card:hover { transform: translateY(-2px); border-color: var(--line-strong); background: rgba(255, 255, 255, 0.06); }
 .mode-card.primary { border-color: var(--cyan); box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.4), 0 10px 30px rgba(34, 211, 238, 0.12); }
+.mode-card.daily { border-color: #f59e0b; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.4), 0 10px 30px rgba(245, 158, 11, 0.12); }
+.mode-card.daily:hover { border-color: #fbbf24; }
 .mode-name { font-size: 18px; font-weight: 800; }
 .mode-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
 
@@ -426,6 +428,33 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Toast 通知 */
+.toast-container {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; z-index: 1000; pointer-events: none;
+}
+.toast {
+  background: rgba(10, 15, 31, 0.95); border: 1px solid var(--cyan);
+  color: var(--text); padding: 10px 18px; border-radius: 10px;
+  font-size: 14px; font-weight: 600; box-shadow: 0 4px 20px rgba(34, 211, 238, 0.3);
+  animation: toast-in 0.3s ease, toast-out 0.3s ease 2.5s forwards;
+  text-align: center; min-width: 180px;
+}
+.toast.achievement { border-color: #fbbf24; box-shadow: 0 4px 20px rgba(251, 191, 36, 0.3); }
+.toast.perfect { border-color: #a3e635; box-shadow: 0 4px 20px rgba(163, 230, 53, 0.3); }
+.toast.combo { border-color: #f472b6; box-shadow: 0 4px 20px rgba(244, 114, 182, 0.3); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes toast-out { from { opacity: 1; } to { opacity: 0; transform: translateY(-10px); } }
+
+/* 危险区警示 */
+.danger-zone {
+  position: fixed; bottom: 0; left: 0; right: 0; height: 60px;
+  background: linear-gradient(to top, rgba(239, 68, 68, 0.4), transparent);
+  pointer-events: none; z-index: 100; opacity: 0; transition: opacity 0.3s;
+}
+.danger-zone.active { opacity: 1; animation: danger-pulse 1s ease-in-out infinite; }
+@keyframes danger-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 
 @media (max-width: 560px) {
   .panel { padding: 22px 18px; }
